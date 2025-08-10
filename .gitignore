@@ -1,0 +1,16 @@
+# IntelliJ / IDEA
+.idea/
+*.iml
+
+# Gradle
+.gradle/
+build/
+out/
+
+# OS
+.DS_Store
+
+# Env / secrets
+.env
+*.env
+/system_instruction.txt
