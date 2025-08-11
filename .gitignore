@@ -13,4 +13,3 @@ out/
 # Env / secrets
 .env
 *.env
-/system_instruction.txt
