@@ -1,92 +1,103 @@
-import okhttp3.*
-import okhttp3.MediaType.Companion.toMediaType
-import okhttp3.RequestBody.Companion.toRequestBody
-import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
-import java.nio.charset.StandardCharsets
-import java.nio.file.Files
-import java.nio.file.Paths
-import java.time.Duration
+@file:Suppress("SameParameterValue", "unused")
 
-private const val INSTRUCTION_FILE = "system_instruction.txt"
+import agents.MarkdownInterviewAgent
+import agents.PostProcessorAgent
+import util.Cli
+import util.FileUtils
+import util.GeminiClient
 
-data class Msg(val role: String, val content: String) // role: "user" | "model"
+/**
+ * Two-agent pipeline orchestrator.
+ *
+ * - Agent 1 (MarkdownInterviewAgent): collects interview data and produces a Markdown spec.
+ * - Agent 2 (PostProcessorAgent): reads the spec and produces a processed Markdown (e.g., summary).
+ *
+ * Both agents *can* use Gemini if GEMINI_API_KEY is set. Otherwise, the code falls back to
+ * deterministic local processing while keeping the same pipeline behavior.
+ *
+ * CLI flags:
+ *   --specPath=<path>         Path for Agent 1 Markdown spec (default: out/spec.md)
+ *   --agent2Output=<path>     Path for Agent 2 output (default: out/agent2_output.md)
+ *   --agent2System=<path>     System instruction file for Agent 2 (default: system_instruction_agent2.txt)
+ */
+fun main(args: Array<String>) {
+    println("[INFO] Starting two-agent pipeline…")
 
-fun main() {
-    val apiKey = System.getenv("GEMINI_API_KEY")
-        ?: error("Set GEMINI_API_KEY environment variable")
-
-    val model = "gemini-2.5-flash"
-    val url = "https://generativelanguage.googleapis.com/v1beta/models/$model:generateContent?key=$apiKey"
-
-    val systemInstruction = loadSystemInstruction()
-
-    println("systemInstruction: $systemInstruction")
-    val history = mutableListOf<Msg>()
-
-    val httpClient = OkHttpClient.Builder()
-        .connectTimeout(Duration.ofSeconds(20))
-        .writeTimeout(Duration.ofSeconds(120))
-        .readTimeout(Duration.ofSeconds(180))
-        .callTimeout(Duration.ofSeconds(0))
-        .retryOnConnectionFailure(true)
-        .build()
-
-    val json = jacksonObjectMapper()
-
-    println("Gemini Kotlin Chat. Type 'exit' to quit.\n")
-
-    while (true) {
-        print("Вы: ")
-        val userInput = readlnOrNull()?.trim().orEmpty()
-        if (userInput.isEmpty() || userInput.equals("exit", true)) break
-
-        history += Msg("user", userInput)
-
-        // Gemini expects: contents[] with role + parts[text]
-        val contents = history.map { m ->
-            mapOf("role" to m.role, "parts" to listOf(mapOf("text" to m.content)))
-        }
-        val bodyMap = mapOf(
-            "systemInstruction" to mapOf("parts" to listOf(mapOf("text" to systemInstruction))),
-            "contents" to contents
+    // 1) Parse CLI
+    val cli = try {
+        Cli.parse(
+            args = args,
+            defaults = Cli.Defaults(
+                specPath = "out/spec.md",
+                agent2Output = "out/agent2_output.md",
+                agent2System = "system_instruction_agent2.txt"
+            )
         )
-        val reqBody = json.writeValueAsString(bodyMap)
-            .toRequestBody("application/json".toMediaType())
+    } catch (e: IllegalArgumentException) {
+        println("[ERROR] ${e.message}")
+        return
+    }
 
-        val req = Request.Builder()
-            .url(url)
-            .post(reqBody)
-            .header("Content-Type", "application/json")
-            .build()
-
-        httpClient.newCall(req).execute().use { resp ->
-            if (!resp.isSuccessful) {
-                val err = resp.body?.string().orEmpty()
-                error("HTTP ${resp.code} - $err")
-            }
-            val txt = resp.body?.string().orEmpty()
-            val tree = json.readTree(txt)
-
-            // candidates[0].content.parts[0].text
-            val reply = tree["candidates"]?.get(0)
-                ?.get("content")?.get("parts")?.get(0)?.get("text")
-                ?.asText()?.trim().orEmpty()
-
-            println("Модель: $reply\n")
-            history += Msg("model", reply)
+    // 2) Prepare Gemini client (optional)
+    val gemini = GeminiClient.fromEnv().also {
+        if (!it.isConfigured()) {
+            println("[WARN] GEMINI_API_KEY not set; running with local fallback logic.")
+        } else {
+            println("[INFO] Gemini configured with model '${it.model}'.")
         }
     }
-}
 
-private fun loadSystemInstruction(): String {
-    return readTextFileOrNull(INSTRUCTION_FILE) ?: ""
-}
-
-private fun readTextFileOrNull(path: String): String? {
-    return try {
-        val p = Paths.get(path)
-        if (Files.exists(p)) Files.readString(p, StandardCharsets.UTF_8) else null
-    } catch (_: Exception) {
-        null
+    // 3) Run Agent 1 → write spec
+    val agent1 = MarkdownInterviewAgent(systemInstructionPath = "system_instruction.txt", gemini = gemini)
+    println("[INFO] Agent 1: Collecting interview data and generating Markdown spec…")
+    val agent1Result = agent1.run()
+    if (!agent1Result.success || agent1Result.content.isNullOrBlank()) {
+        println("[ERROR] Agent 1 failed: ${agent1Result.errorMessage ?: "Unknown error"}")
+        return
     }
+    try {
+        FileUtils.writeUtf8(cli.specPath, agent1Result.content!!)
+        println("[INFO] Wrote spec to '${cli.specPath}'.")
+    } catch (e: Exception) {
+        println("[ERROR] Failed to write spec: ${e.message}")
+        return
+    }
+    if (!FileUtils.existsNonEmpty(cli.specPath)) {
+        println("[ERROR] Spec validation failed: '${cli.specPath}' missing or empty.")
+        return
+    }
+
+    // 4) Run Agent 2 → read spec → process → write output
+    val inputMarkdown = try {
+        FileUtils.readUtf8(cli.specPath)
+    } catch (e: Exception) {
+        println("[ERROR] Failed to read spec for Agent 2: ${e.message}")
+        return
+    }
+
+    val agent2 = PostProcessorAgent(
+        systemInstructionPath = cli.agent2System,
+        inputMarkdown = inputMarkdown,
+        gemini = gemini
+    )
+
+    println("[INFO] Agent 2: Processing spec and producing output…")
+    val agent2Result = agent2.run()
+    if (!agent2Result.success || agent2Result.content.isNullOrBlank()) {
+        println("[ERROR] Agent 2 failed: ${agent2Result.errorMessage ?: "Unknown error"}")
+        return
+    }
+    try {
+        FileUtils.writeUtf8(cli.agent2Output, agent2Result.content!!)
+        println("[INFO] Wrote Agent 2 output to '${cli.agent2Output}'.")
+    } catch (e: Exception) {
+        println("[ERROR] Failed to write Agent 2 output: ${e.message}")
+        return
+    }
+    if (!FileUtils.existsNonEmpty(cli.agent2Output)) {
+        println("[ERROR] Agent 2 output validation failed: '${cli.agent2Output}' missing or empty.")
+        return
+    }
+
+    println("[INFO] Pipeline completed successfully.")
 }
