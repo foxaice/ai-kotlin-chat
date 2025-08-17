@@ -4,11 +4,11 @@ class TodoistManager {
     private val mcpClient = TodoistMcp()
     private val apiClient = TodoistApiClient()
     private var useMcp = false
-    
+
     fun initialize(todoistApiKey: String, todoistServerPath: String? = null): Boolean {
         // Устанавливаем API ключ для прямого API
         apiClient.setApiKey(todoistApiKey)
-        
+
         // Пытаемся подключиться к MCP серверу
         if (todoistServerPath != null) {
             useMcp = mcpClient.connect(todoistServerPath)
@@ -16,17 +16,17 @@ class TodoistManager {
             // Пытаемся найти сервер в PATH
             useMcp = mcpClient.connect()
         }
-        
+
         if (useMcp) {
             println("✅ Используется MCP сервер для Todoist")
         } else {
             println("⚠️ MCP сервер недоступен, используется прямой API")
         }
-        
+
         return true
     }
-    
-    fun getProjects(): List<Map<String, Any>> {
+
+    fun getProjects(): String {
         return if (useMcp && mcpClient.isConnected()) {
             mcpClient.listProjects()
         } else {
@@ -38,12 +38,12 @@ class TodoistManager {
                     "color" to (project.color ?: ""),
                     "url" to project.url,
                     "is_inbox" to project.is_inbox_project,
-                    "favorite" to project.favorite
+                    "favorite" to project.is_favorite
                 )
-            }
+            }.toString()
         }
     }
-    
+
     fun getTasks(projectId: String? = null): List<Map<String, Any>> {
         return if (useMcp && mcpClient.isConnected()) {
             mcpClient.listTasks(projectId)
@@ -64,7 +64,7 @@ class TodoistManager {
             }
         }
     }
-    
+
     fun createTask(content: String, projectId: String? = null, dueDate: String? = null): Boolean {
         return if (useMcp && mcpClient.isConnected()) {
             mcpClient.createTask(content, projectId, dueDate)
@@ -77,7 +77,7 @@ class TodoistManager {
             apiClient.createTask(taskRequest) != null
         }
     }
-    
+
     fun completeTask(taskId: String): Boolean {
         return if (useMcp && mcpClient.isConnected()) {
             // MCP использует название задачи, а не ID
@@ -87,7 +87,7 @@ class TodoistManager {
             apiClient.closeTask(taskId)
         }
     }
-    
+
     fun completeTaskByName(taskName: String): Boolean {
         return if (useMcp && mcpClient.isConnected()) {
             mcpClient.completeTaskByName(taskName)
@@ -103,8 +103,13 @@ class TodoistManager {
             }
         }
     }
-    
-    fun updateTask(taskName: String, newContent: String? = null, newDueDate: String? = null, newPriority: Int? = null): Boolean {
+
+    fun updateTask(
+        taskName: String,
+        newContent: String? = null,
+        newDueDate: String? = null,
+        newPriority: Int? = null
+    ): Boolean {
         return if (useMcp && mcpClient.isConnected()) {
             mcpClient.updateTask(taskName, newContent, newDueDate, newPriority)
         } else {
@@ -121,7 +126,7 @@ class TodoistManager {
             }
         }
     }
-    
+
     fun deleteTask(taskId: String): Boolean {
         return if (useMcp && mcpClient.isConnected()) {
             // MCP использует название задачи, а не ID
@@ -131,7 +136,7 @@ class TodoistManager {
             apiClient.deleteTask(taskId)
         }
     }
-    
+
     fun deleteTaskByName(taskName: String): Boolean {
         return if (useMcp && mcpClient.isConnected()) {
             mcpClient.deleteTask(taskName)
@@ -147,7 +152,7 @@ class TodoistManager {
             }
         }
     }
-    
+
     fun getAvailableTools(): List<String> {
         return if (useMcp && mcpClient.isConnected()) {
             mcpClient.getAvailableTools()
@@ -155,17 +160,17 @@ class TodoistManager {
             listOf("get_projects", "get_tasks", "create_task", "complete_task", "delete_task")
         }
     }
-    
+
     fun isMcpConnected(): Boolean {
         return useMcp && mcpClient.isConnected()
     }
-    
+
     fun disconnect() {
         if (useMcp) {
             mcpClient.disconnect()
         }
     }
-    
+
     fun getStatus(): String {
         return if (useMcp && mcpClient.isConnected()) {
             "MCP сервер подключен"

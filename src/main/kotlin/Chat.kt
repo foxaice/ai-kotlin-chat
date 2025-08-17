@@ -15,7 +15,7 @@ data class Msg(val role: String, val content: String) // role: "user" | "model"
 fun main() {
     val apiKey = System.getenv("GEMINI_API_KEY")
         ?: error("Set GEMINI_API_KEY environment variable")
-    
+
     val todoistApiKey = System.getenv("TODOIST_API_KEY") ?: error("Set TODOIST_API_KEY environment variable")
     val todoistServerPath = System.getenv("TODOIST_MCP_SERVER_PATH")
 
@@ -25,7 +25,7 @@ fun main() {
     val systemInstruction = loadSystemInstruction()
 
     println("systemInstruction: $systemInstruction")
-    
+
     // Инициализируем Todoist менеджер
     val todoistManager = TodoistManager()
     if (todoistApiKey != null) {
@@ -34,7 +34,7 @@ fun main() {
     } else {
         println("⚠️ TODOIST_API_KEY не установлен, Todoist функции недоступны")
     }
-    
+
     val history = mutableListOf<Msg>()
 
     val httpClient = OkHttpClient.Builder()
@@ -63,8 +63,23 @@ fun main() {
 
         // Обрабатываем Todoist команды
         if (userInput.startsWith("/todoist")) {
-            handleTodoistCommand(userInput, todoistManager)
-            continue
+            val commandResult = handleTodoistCommand(userInput, todoistManager)
+            history += Msg("user", """
+                дай аналитику по моим проектам в форме отчёта, выдавай только отчёт, без своего обычного комментария 
+                перед выдачей отчёта, в самом отчёте комментарии от тебя возможны
+
+                \nформат отчёта:
+                \n---НАЧАЛО ОТЧЁТА---
+                \n{перечисление проектов}
+                \n{отчёт по проектам}
+                \n{советы по проектам и иерархии}
+                \n{вывод}
+                \n---КОНЕЦ ОТЧЁТА---
+                
+                вот сами проекты:
+                $commandResult
+            """.trimIndent())
+            println("идёт сбор отчёта по проектам...")
         }
 
         // Gemini expects: contents[] with role + parts[text]
@@ -116,8 +131,13 @@ private fun readTextFileOrNull(path: String): String? {
     }
 }
 
-private fun handleTodoistCommand(command: String, todoistManager: TodoistManager) {
+private fun handleTodoistCommand(command: String, todoistManager: TodoistManager): String {
     val parts = command.split(" ")
+
+    val response = StringBuilder()
+
+    operator fun StringBuilder.invoke() = this.toString()
+
     if (parts.size < 2) {
         println("📋 Использование: /todoist <команда> [параметры]")
         println("📋 Доступные команды:")
@@ -128,24 +148,23 @@ private fun handleTodoistCommand(command: String, todoistManager: TodoistManager
         println("  delete <task_id|название> - удалить задачу")
         println("  update <название> - обновить задачу")
         println("  status - статус подключения")
-        return
+        return response()
     }
-    
+
     when (parts[1]) {
         "projects" -> {
             println("📋 Получение проектов...")
             val projects = todoistManager.getProjects()
+
             if (projects.isEmpty()) {
                 println("📋 Проекты не найдены")
             } else {
-                println("📋 Проекты:")
-                projects.forEach { project ->
-                    val inbox = if (project["is_inbox"] as Boolean) " [Inbox]" else ""
-                    val favorite = if (project["favorite"] as Boolean) " ⭐" else ""
-                    println("  ${project["id"]}: ${project["name"]}$inbox$favorite")
-                }
+                println("📋 Проекты получены")
+
+                response.append(projects)
             }
         }
+
         "tasks" -> {
             val projectId = if (parts.size > 2) parts[2] else null
             println("📋 Получение задач${if (projectId != null) " для проекта $projectId" else ""}...")
@@ -172,16 +191,17 @@ private fun handleTodoistCommand(command: String, todoistManager: TodoistManager
                 }
             }
         }
+
         "add" -> {
             if (parts.size < 3) {
                 println("❌ Укажите текст задачи")
-                return
+                return response()
             }
             val content = parts.drop(2).joinToString(" ")
             val projectId = if (parts.size > 3) parts[3] else null
-            println("project "+parts.getOrNull(3))
+            println("project " + parts.getOrNull(3))
             val dueDate = if (parts.size > 4) parts[4] else null
-            println("due "+parts.getOrNull(4))
+            println("due " + parts.getOrNull(4))
 
             println(parts)
             println("📋 Создание задачи: $content")
@@ -191,13 +211,14 @@ private fun handleTodoistCommand(command: String, todoistManager: TodoistManager
                 println("❌ Ошибка создания задачи")
             }
         }
+
         "complete" -> {
             if (parts.size < 3) {
                 println("❌ Укажите ID задачи или название")
-                return
+                return response()
             }
             val taskIdentifier = parts[2]
-            
+
             // Пытаемся определить, это ID или название
             if (taskIdentifier.matches(Regex("^\\d+$"))) {
                 // Это ID
@@ -218,13 +239,14 @@ private fun handleTodoistCommand(command: String, todoistManager: TodoistManager
                 }
             }
         }
+
         "delete" -> {
             if (parts.size < 3) {
                 println("❌ Укажите ID задачи или название")
-                return
+                return response()
             }
             val taskIdentifier = parts[2]
-            
+
             // Пытаемся определить, это ID или название
             if (taskIdentifier.matches(Regex("^\\d+$"))) {
                 // Это ID
@@ -245,40 +267,43 @@ private fun handleTodoistCommand(command: String, todoistManager: TodoistManager
                 }
             }
         }
+
         "update" -> {
             if (parts.size < 3) {
                 println("❌ Укажите название задачи для обновления")
-                return
+                return response()
             }
             val taskName = parts.drop(2).joinToString(" ")
             println("📋 Обновление задачи '$taskName'...")
-            
+
             // Запрашиваем новые данные
             print("Новое название (Enter для пропуска): ")
             val newContent = readlnOrNull()?.trim()?.takeIf { it.isNotEmpty() }
-            
+
             print("Новая дата (Enter для пропуска): ")
             val newDueDate = readlnOrNull()?.trim()?.takeIf { it.isNotEmpty() }
-            
+
             print("Новый приоритет 1-4 (Enter для пропуска): ")
             val newPriorityStr = readlnOrNull()?.trim()
             val newPriority = newPriorityStr?.toIntOrNull()?.takeIf { it in 1..4 }
-            
+
             if (todoistManager.updateTask(taskName, newContent, newDueDate, newPriority)) {
                 println("✅ Задача обновлена")
             } else {
                 println("❌ Ошибка обновления задачи")
             }
         }
+
         "status" -> {
             println("📋 Статус Todoist: ${todoistManager.getStatus()}")
             if (todoistManager.isMcpConnected()) {
                 println("📋 Доступные MCP инструменты: ${todoistManager.getAvailableTools().joinToString(", ")}")
             }
         }
+
         else -> {
             println("❌ Неизвестная команда: ${parts[1]}")
         }
     }
-    println()
+    return response()
 }

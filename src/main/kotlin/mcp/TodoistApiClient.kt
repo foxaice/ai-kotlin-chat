@@ -14,16 +14,13 @@ data class TodoistProject(
     val parent_id: String?,
     val order: Int,
     val comment_count: Int,
-    val shared: Boolean,
-    val favorite: Boolean,
-    val sync_id: String?,
+    val is_shared: Boolean,
+    val is_favorite: Boolean,
     val url: String,
     val is_inbox_project: Boolean,
     val is_team_inbox: Boolean,
     val view_style: String,
-    val team_inbox: TodoistTeamInbox?,
-    val created_at: String,
-    val updated_at: String
+    val description: String?,
 )
 
 data class TodoistTeamInbox(
@@ -97,22 +94,22 @@ class TodoistApiClient {
         .writeTimeout(Duration.ofSeconds(30))
         .readTimeout(Duration.ofSeconds(30))
         .build()
-    
+
     private val json = jacksonObjectMapper()
     private val baseUrl = "https://api.todoist.com/rest/v2"
     private var apiKey: String = ""
-    
+
     fun setApiKey(key: String) {
         apiKey = key
     }
-    
+
     fun getProjects(): List<TodoistProject> {
         val request = Request.Builder()
             .url("$baseUrl/projects")
             .header("Authorization", "Bearer $apiKey")
             .get()
             .build()
-        
+
         return try {
             httpClient.newCall(request).execute().use { response ->
                 if (response.isSuccessful) {
@@ -128,20 +125,20 @@ class TodoistApiClient {
             emptyList()
         }
     }
-    
+
     fun getTasks(projectId: String? = null): List<TodoistTask> {
         val url = if (projectId != null) {
             "$baseUrl/tasks?project_id=$projectId"
         } else {
             "$baseUrl/tasks"
         }
-        
+
         val request = Request.Builder()
             .url(url)
             .header("Authorization", "Bearer $apiKey")
             .get()
             .build()
-        
+
         return try {
             httpClient.newCall(request).execute().use { response ->
                 if (response.isSuccessful) {
@@ -157,18 +154,18 @@ class TodoistApiClient {
             emptyList()
         }
     }
-    
+
     fun createTask(taskRequest: CreateTaskRequest): TodoistTask? {
         val requestBody = json.writeValueAsString(taskRequest)
             .toRequestBody("application/json".toMediaType())
-        
+
         val request = Request.Builder()
             .url("$baseUrl/tasks")
             .header("Authorization", "Bearer $apiKey")
             .header("Content-Type", "application/json")
             .post(requestBody)
             .build()
-        
+
         return try {
             httpClient.newCall(request).execute().use { response ->
                 if (response.isSuccessful) {
@@ -184,14 +181,14 @@ class TodoistApiClient {
             null
         }
     }
-    
+
     fun closeTask(taskId: String): Boolean {
         val request = Request.Builder()
             .url("$baseUrl/tasks/$taskId/close")
             .header("Authorization", "Bearer $apiKey")
             .post("".toRequestBody("application/json".toMediaType()))
             .build()
-        
+
         return try {
             httpClient.newCall(request).execute().use { response ->
                 response.isSuccessful
@@ -201,14 +198,14 @@ class TodoistApiClient {
             false
         }
     }
-    
+
     fun deleteTask(taskId: String): Boolean {
         val request = Request.Builder()
             .url("$baseUrl/tasks/$taskId")
             .header("Authorization", "Bearer $apiKey")
             .delete()
             .build()
-        
+
         return try {
             httpClient.newCall(request).execute().use { response ->
                 response.isSuccessful

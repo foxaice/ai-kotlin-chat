@@ -1,12 +1,13 @@
 package mcp
 
+import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
+import com.fasterxml.jackson.module.kotlin.readValue
 import java.io.BufferedReader
 import java.io.BufferedWriter
 import java.io.InputStreamReader
 import java.io.OutputStreamWriter
-import java.io.File
-import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
-import com.fasterxml.jackson.module.kotlin.readValue
+
+data class Result(val isSuccessful: Boolean, val data: Map<String, Any>? = null)
 
 class TodoistMcp {
     private var isConnected = false
@@ -14,7 +15,7 @@ class TodoistMcp {
     private var reader: BufferedReader? = null
     private var writer: BufferedWriter? = null
     private val json = jacksonObjectMapper()
-    
+
     fun connect(todoistServerPath: String = "todoist-mcp-server"): Boolean {
         return try {
             // Запускаем MCP сервер через node
@@ -28,7 +29,7 @@ class TodoistMcp {
                 // По умолчанию используем node
                 "node"
             }
-            
+
             val processBuilder = if (serverPath == "node") {
                 // Запускаем через node
                 val jsFile = if (todoistServerPath.endsWith(".js")) {
@@ -41,13 +42,13 @@ class TodoistMcp {
                 // Прямой запуск (если это исполняемый файл)
                 ProcessBuilder(serverPath)
             }
-            
+
             processBuilder.environment()["TODOIST_API_TOKEN"] = System.getenv("TODOIST_API_KEY") ?: ""
-            
+
             process = processBuilder.start()
             reader = BufferedReader(InputStreamReader(process!!.inputStream))
             writer = BufferedWriter(OutputStreamWriter(process!!.outputStream))
-            
+
             // Инициализируем MCP соединение
             val initRequest = mapOf(
                 "jsonrpc" to "2.0",
@@ -62,10 +63,10 @@ class TodoistMcp {
                     )
                 )
             )
-            
+
             sendRequest(initRequest)
             val initResponse = readResponse()
-            
+
             if (initResponse != null && !initResponse.containsKey("error")) {
                 isConnected = true
                 println("✅ Подключен к Todoist MCP серверу")
@@ -80,7 +81,7 @@ class TodoistMcp {
             false
         }
     }
-    
+
     fun disconnect() {
         try {
             isConnected = false
@@ -92,7 +93,7 @@ class TodoistMcp {
             println("⚠️ Ошибка при отключении: ${e.message}")
         }
     }
-    
+
     fun getAvailableTools(): List<String> {
         return try {
             val request = mapOf(
@@ -101,10 +102,10 @@ class TodoistMcp {
                 "method" to "tools/list",
                 "params" to emptyMap<String, Any>()
             )
-            
+
             sendRequest(request)
             val response = readResponse()
-            
+
             if (response != null && response.containsKey("result")) {
                 val result = response["result"] as Map<*, *>
                 val tools = result["tools"] as List<Map<*, *>>
@@ -119,8 +120,8 @@ class TodoistMcp {
             emptyList()
         }
     }
-    
-    fun callTool(toolName: String, arguments: Map<String, Any>): Boolean {
+
+    fun callTool(toolName: String, arguments: Map<String, Any>): Result {
         return try {
             val request = mapOf(
                 "jsonrpc" to "2.0",
@@ -131,30 +132,30 @@ class TodoistMcp {
                     "arguments" to arguments
                 )
             )
-            
+
             sendRequest(request)
             val response = readResponse()
-            
+
             if (response != null && response.containsKey("result")) {
                 val result = response["result"] as Map<*, *>
                 val isError = result["isError"] as? Boolean ?: false
-                !isError
+                Result(isSuccessful = !isError, data = response)
             } else {
-                false
+                Result(isSuccessful = false)
             }
         } catch (e: Exception) {
             println("❌ Ошибка вызова инструмента $toolName: ${e.message}")
-            false
+            Result(isSuccessful = false)
         }
     }
-    
+
     private fun sendRequest(request: Map<String, Any>) {
         val jsonRequest = json.writeValueAsString(request)
         writer?.write(jsonRequest)
         writer?.newLine()
         writer?.flush()
     }
-    
+
     private fun readResponse(): Map<String, Any>? {
         return try {
             val line = reader?.readLine()
@@ -168,22 +169,30 @@ class TodoistMcp {
             null
         }
     }
-    
-    fun listProjects(): List<Map<String, Any>> {
-        // MCP сервер не предоставляет инструмент для получения проектов
-        // Используем прямой API через TodoistApiClient
-        println("⚠️ Получение проектов через MCP не поддерживается, используется прямой API")
-        return emptyList()
+
+    fun listProjects(isOnlyFavorite: Boolean? = null): String {
+        val args = mutableMapOf<String, Any>()
+        if (isOnlyFavorite != null) {
+            args["favorite"] = isOnlyFavorite
+        }
+
+        val success = callTool("todoist_get_projects", args)
+
+        if (success.isSuccessful) {
+            return success.data.orEmpty().toString()
+        }
+
+        return ""
     }
-    
+
     fun listTasks(projectId: String? = null): List<Map<String, Any>> {
         val args = mutableMapOf<String, Any>()
         if (projectId != null) {
             args["project_id"] = projectId
         }
-        
+
         val success = callTool("todoist_get_tasks", args)
-        return if (success) {
+        return if (success.isSuccessful) {
             try {
                 // Парсим результат от MCP сервера
                 // Пока что возвращаем пустой список, так как парсинг требует дополнительной логики
@@ -196,33 +205,38 @@ class TodoistMcp {
             emptyList()
         }
     }
-    
+
     fun createTask(content: String, projectId: String? = null, dueDate: String? = null): Boolean {
         val args = mutableMapOf<String, Any>()
         args["content"] = content
-        
+
         if (dueDate != null) {
             args["due_string"] = dueDate
         }
-        
-        return callTool("todoist_create_task", args)
+
+        return callTool("todoist_create_task", args).isSuccessful
     }
-    
+
     fun completeTask(taskId: String): Boolean {
         // MCP сервер использует название задачи, а не ID
         // Пока что заглушка
         println("⚠️ Завершение задачи через MCP пока не реализовано")
         return false
     }
-    
+
     fun completeTaskByName(taskName: String): Boolean {
-        return callTool("todoist_complete_task", mapOf("task_name" to taskName))
+        return callTool("todoist_complete_task", mapOf("task_name" to taskName)).isSuccessful
     }
-    
-    fun updateTask(taskName: String, newContent: String? = null, newDueDate: String? = null, newPriority: Int? = null): Boolean {
+
+    fun updateTask(
+        taskName: String,
+        newContent: String? = null,
+        newDueDate: String? = null,
+        newPriority: Int? = null
+    ): Boolean {
         val args = mutableMapOf<String, Any>()
         args["task_name"] = taskName
-        
+
         if (newContent != null) {
             args["content"] = newContent
         }
@@ -232,14 +246,14 @@ class TodoistMcp {
         if (newPriority != null) {
             args["priority"] = newPriority
         }
-        
-        return callTool("todoist_update_task", args)
+
+        return callTool("todoist_update_task", args).isSuccessful
     }
-    
+
     fun deleteTask(taskName: String): Boolean {
-        return callTool("todoist_delete_task", mapOf("task_name" to taskName))
+        return callTool("todoist_delete_task", mapOf("task_name" to taskName)).isSuccessful
     }
-    
+
     fun isConnected(): Boolean {
         return isConnected
     }
