@@ -1,0 +1,13 @@
+version: "3.9"
+services:
+  day8-job:
+    build: .
+    container_name: ai-kotlin-chat-day8
+    environment:
+      GEMINI_API_KEY: "${GEMINI_API_KEY}"
+      TELEGRAM_BOT_TOKEN: "${TELEGRAM_BOT_TOKEN}"
+      TELEGRAM_CHAT_ID: "${TELEGRAM_CHAT_ID}"
+    restart: unless-stopped
+    # optional: mount out/ to host for inspection
+    volumes:
+      - ./out:/app/out
