@@ -44,9 +44,9 @@ class TodoistManager {
         }
     }
 
-    fun getTasks(projectId: String? = null): List<Map<String, Any>> {
+    fun getTasks(projectId: String? = null, filter: String? = null): List<Map<String, Any>> {
         return if (useMcp && mcpClient.isConnected()) {
-            mcpClient.listTasks(projectId)
+            mcpClient.listTasks(projectId = projectId, filter = filter)
         } else {
             // Конвертируем API задачи в Map
             apiClient.getTasks(projectId).map { task ->

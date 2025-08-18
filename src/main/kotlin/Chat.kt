@@ -7,12 +7,13 @@ import java.nio.file.Files
 import java.nio.file.Paths
 import java.time.Duration
 import mcp.TodoistManager
+import kotlin.collections.get
 
 private const val INSTRUCTION_FILE = "system_instruction.txt"
 
 data class Msg(val role: String, val content: String) // role: "user" | "model"
 
-fun main() {
+fun main(input: String? = null): String {
     val apiKey = System.getenv("GEMINI_API_KEY")
         ?: error("Set GEMINI_API_KEY environment variable")
 
@@ -51,7 +52,7 @@ fun main() {
 
     while (true) {
         print("Вы: ")
-        val userInput = readlnOrNull()?.trim().orEmpty()
+        val userInput = input ?: readlnOrNull()?.trim().orEmpty()
         if (userInput.isEmpty() || userInput.equals("exit", true)) {
             if (todoistApiKey != null) {
                 todoistManager.disconnect()
@@ -64,22 +65,26 @@ fun main() {
         // Обрабатываем Todoist команды
         if (userInput.startsWith("/todoist")) {
             val commandResult = handleTodoistCommand(userInput, todoistManager)
-            history += Msg("user", """
-                дай аналитику по моим проектам в форме отчёта, выдавай только отчёт, без своего обычного комментария 
-                перед выдачей отчёта, в самом отчёте комментарии от тебя возможны
-
-                \nформат отчёта:
-                \n---НАЧАЛО ОТЧЁТА---
-                \n{перечисление проектов}
-                \n{отчёт по проектам}
-                \n{советы по проектам и иерархии}
-                \n{вывод}
-                \n---КОНЕЦ ОТЧЁТА---
+            history += Msg(
+                "user", """
+                Создай отчёт по задачам на сегодня для меня. Передавай мне доброе утро! и какую-нибудь рандомную цитату,
+                чтобы легче было вставать и выполнять задачи - не говори, что это рандомная цитата, 
+                сделай вид что ты сам её предложить и напиши всё сообщение мне гармонично, чтобы оно смотрелось
+                Добавь эмоджи и теплоты)
+                Расскажи, что у меня запланировано на сегодня и если есть конкретное время выполнение задачи, то обязательно укажи это в сообщении - при написании задач эмоджи не пишутся
+                Укажи время к задачам!!!!
+                Ты личный помощник Тудуистик!
+                Помни, что ты пишешь сообщения для телеграмма. Учитывай формат сообщения, чтобы телеграм его поддерживал!!!
                 
-                вот сами проекты:
-                $commandResult
-            """.trimIndent())
-            println("идёт сбор отчёта по проектам...")
+                формат задачи:
+                - {название задачи}{время, когда необходимо её исполнить}
+                
+                пункт про задачи выдели жирным
+                
+                Вот сами задачи на сегодня: $commandResult
+            """.trimIndent()
+            )
+            println("идёт сбор отчёта по задачам на сегодня...")
         }
 
         // Gemini expects: contents[] with role + parts[text]
@@ -114,8 +119,11 @@ fun main() {
 
             println("Модель: $reply\n")
             history += Msg("model", reply)
+
+            return reply
         }
     }
+    return ""
 }
 
 private fun loadSystemInstruction(): String {
@@ -172,23 +180,25 @@ private fun handleTodoistCommand(command: String, todoistManager: TodoistManager
             if (tasks.isEmpty()) {
                 println("📋 Задачи не найдены")
             } else {
-                println("📋 Задачи:")
-                tasks.forEach { task ->
-                    val completed = if (task["is_completed"] as Boolean) " ✅" else " ⏳"
-                    val priority = when (task["priority"] as Int) {
-                        4 -> " 🔴"
-                        3 -> " 🟠"
-                        2 -> " 🟡"
-                        else -> " ⚪"
-                    }
-                    println("  ${task["id"]}: ${task["content"]}$completed$priority")
-                    if ((task["description"] as String).isNotEmpty()) {
-                        println("    ${task["description"]}")
-                    }
-                    if ((task["due"] as String).isNotEmpty()) {
-                        println("    📅 ${task["due"]}")
-                    }
-                }
+                println("📋 Задачи получены")
+                val tasksText = (((tasks.first()["result"] as? Map<*, *>).orEmpty()["content"] as? List<*>)
+                    ?.firstOrNull() as? Map<*, *>).orEmpty()
+
+                response.append(tasksText)
+            }
+        }
+
+        "todayTasks" -> {
+            println("📋 Получение задач на сегодня...")
+            val tasks = todoistManager.getTasks(filter = "today")
+            if (tasks.isEmpty()) {
+                println("📋 Задачи не найдены задачи на сегодня")
+            } else {
+                println("📋 Задачи получены")
+                val tasksText = (((tasks.first()["result"] as? Map<*, *>).orEmpty()["content"] as? List<*>)
+                    ?.firstOrNull() as? Map<*, *>).orEmpty()
+                println(tasksText)
+                response.append(tasksText)
             }
         }
 

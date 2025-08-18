@@ -185,18 +185,21 @@ class TodoistMcp {
         return ""
     }
 
-    fun listTasks(projectId: String? = null): List<Map<String, Any>> {
+    fun listTasks(projectId: String? = null, filter: String? = null): List<Map<String, Any>> {
         val args = mutableMapOf<String, Any>()
         if (projectId != null) {
             args["project_id"] = projectId
         }
+        if (filter != null) {
+            args["filter"] = filter
+        }
+        args["limit"] = 10000
 
         val success = callTool("todoist_get_tasks", args)
+
         return if (success.isSuccessful) {
             try {
-                // Парсим результат от MCP сервера
-                // Пока что возвращаем пустой список, так как парсинг требует дополнительной логики
-                emptyList()
+                listOf(success.data.orEmpty())
             } catch (e: Exception) {
                 println("❌ Ошибка парсинга задач: ${e.message}")
                 emptyList()

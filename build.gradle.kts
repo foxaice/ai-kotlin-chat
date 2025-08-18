@@ -21,3 +21,13 @@ application { mainClass.set("ChatKt") }
 kotlin {
     jvmToolchain(21)
 }
+
+// ---- Day 8: run the Telegram job scheduler ----
+tasks.register<JavaExec>("runJob") {
+    group = "application"
+    description = "Run Day8 job: every 20s run ChatKt main with '/todoist todayTasks' and send result to Telegram"
+    classpath = sourceSets["main"].runtimeClasspath
+    // job.JobMainKt is the top-level main in src/main/kotlin/job/JobMain.kt
+    mainClass.set("job.JobMainKt")
+    // You can override interval, input, etc. via --args (see README)
+}
