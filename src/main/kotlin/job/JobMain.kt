@@ -1,6 +1,7 @@
 package job
 
 import main
+import mcp.McpManager
 import java.net.HttpURLConnection
 import java.net.URL
 import java.net.URLEncoder
@@ -8,56 +9,90 @@ import java.nio.charset.StandardCharsets
 import kotlin.system.exitProcess
 
 /**
- * Day 8 job:
+ * Day 9 job с двумя MCP серверами:
  * - every N seconds:
- *   - run job.ChatKt.mainmain and feed "/todoist todayTasks" then "exit"
- *   - parse model reply from stdout
- *   - send the reply to Telegram (BOT token + chatId via env or args)
+ *   - использует McpManager для координации Todoist и Telegram MCP
+ *   - Todoist MCP получает задачи
+ *   - Telegram MCP форматирует и отправляет их
  *
  * Default interval: 20 seconds
  *
  * CLI args (all optional):
  *   --intervalSeconds=20
- *   --input=/todoist todayTasks
+ *   --input=/todoist todayTasks | /mcp-chain
  *   --chatId=12345678
  *   --tgToken=1234:ABCD...
+ *   --useMcpChain=true
  */
 fun main(args: Array<String>) {
     val opts = args.associateNotNull()
     val intervalSec = opts["intervalSeconds"]?.toIntOrNull() ?: 20
-    val input = opts["input"] ?: "/todoist todayTasks"
+    val input = opts["input"] ?: "/mcp-chain"
+    val useMcpChain = opts["useMcpChain"]?.toBoolean() ?: true
     val tgChatId = opts["chatId"] ?: System.getenv("TELEGRAM_CHAT_ID")
     val tgToken = opts["tgToken"] ?: System.getenv("TELEGRAM_BOT_TOKEN")
 
     if (tgToken.isNullOrBlank() || tgChatId.isNullOrBlank()) {
-        System.err.println("[Day8] TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID not set. Exiting.")
+        System.err.println("[Day9] TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID not set. Exiting.")
         exitProcess(2)
     }
     if (System.getenv("GEMINI_API_KEY").isNullOrBlank()) {
-        System.err.println("[Day8] GEMINI_API_KEY is not set. Exiting.")
+        System.err.println("[Day9] GEMINI_API_KEY is not set. Exiting.")
         exitProcess(3)
     }
 
-    System.err.println("[Day8] Job started. intervalSeconds=$intervalSec input=\"$input\"")
-    while (true) {
-        try {
-            val reply = main(input)
-            if (reply.isBlank()) {
-                System.err.println("[Day8] WARN: empty reply from ChatKt")
-            } else {
-                System.err.println("[Day8] Got reply (${reply.length} chars). Sending to Telegram…")
-                sendTelegramMessage(tgToken, tgChatId, reply)
-                System.err.println("[Day8] Sent to Telegram.")
+    val mcpManager = if (useMcpChain) {
+        System.err.println("[Day9] 🔗 Инициализация цепочки MCP серверов...")
+        McpManager().apply {
+            if (!connect()) {
+                System.err.println("[Day9] ❌ Не удалось подключиться к MCP серверам")
+                exitProcess(4)
             }
-        } catch (e: Exception) {
-            System.err.println("[Day8] ERROR: ${e.message}")
-            e.printStackTrace()
         }
-        try {
-            Thread.sleep((intervalSec * 1000L).coerceAtLeast(5000L))
-        } catch (_: InterruptedException) {
-            break
+    } else {
+        null
+    }
+
+    System.err.println("[Day9] 🚀 Job started. intervalSeconds=$intervalSec, useMcpChain=$useMcpChain")
+
+    try {
+        while (true) {
+            try {
+                val reply = if (useMcpChain && mcpManager != null) {
+                    // Используем цепочку MCP серверов
+                    System.err.println("[Day9] 🔗 Запуск цепочки MCP серверов...")
+                    mcpManager.getTodayTasksAndSendToTelegram()
+                } else {
+                    // Используем старый способ через ChatKt
+                    System.err.println("[Day9] 💬 Запуск через ChatKt...")
+                    val chatReply = main(input)
+                    if (chatReply.isBlank()) {
+                        System.err.println("[Day9] WARN: empty reply from ChatKt")
+                        "Нет ответа от ChatKt"
+                    } else {
+                        System.err.println("[Day9] Got reply (${chatReply.length} chars). Sending to Telegram…")
+                        sendTelegramMessage(tgToken, tgChatId, chatReply)
+                        System.err.println("[Day9] Sent to Telegram via HTTP.")
+                        "Отправлено через HTTP API"
+                    }
+                }
+
+                System.err.println("[Day9] ✅ Цикл завершен: $reply")
+
+            } catch (e: Exception) {
+                System.err.println("[Day9] ERROR: ${e.message}")
+                e.printStackTrace()
+            }
+
+            try {
+                Thread.sleep((intervalSec * 1000L).coerceAtLeast(5000L))
+            } catch (_: InterruptedException) {
+                break
+            }
         }
+    } finally {
+        mcpManager?.disconnect()
+        System.err.println("[Day9] 👋 Job завершен")
     }
 }
 
