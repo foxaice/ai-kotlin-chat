@@ -1,0 +1,2 @@
+Error: Could not find or load main class build.install.gemini-kotlin-chat.lib.autolink-0.6.0.jar
+Caused by: java.lang.ClassNotFoundException: build.install.gemini-kotlin-chat.lib.autolink-0.6.0.jar

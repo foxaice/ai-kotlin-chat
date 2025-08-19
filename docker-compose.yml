@@ -1,13 +1,12 @@
-version: "3.9"
+version: '3.8'
+
 services:
-  day8-job:
+  mcp-chain:
     build: .
-    container_name: ai-kotlin-chat-day8
     environment:
-      GEMINI_API_KEY: "${GEMINI_API_KEY}"
-      TELEGRAM_BOT_TOKEN: "${TELEGRAM_BOT_TOKEN}"
-      TELEGRAM_CHAT_ID: "${TELEGRAM_CHAT_ID}"
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
+      - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID}
+      - TODOIST_API_KEY=${TODOIST_API_KEY}
     restart: unless-stopped
-    # optional: mount out/ to host for inspection
-    volumes:
-      - ./out:/app/out
+    container_name: mcp-chain-demo
