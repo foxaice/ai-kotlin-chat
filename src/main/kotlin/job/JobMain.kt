@@ -1,6 +1,7 @@
 package job
 
-import main
+import main as mainWithParam
+import runChat
 import mcp.McpManager
 import java.net.HttpURLConnection
 import java.net.URL
@@ -65,7 +66,7 @@ fun main(args: Array<String>) {
                 } else {
                     // Используем старый способ через ChatKt
                     System.err.println("[Day9] 💬 Запуск через ChatKt...")
-                    val chatReply = main(input)
+                    val chatReply = mainWithParam(input)
                     if (chatReply.isBlank()) {
                         System.err.println("[Day9] WARN: empty reply from ChatKt")
                         "Нет ответа от ChatKt"

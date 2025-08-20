@@ -31,3 +31,12 @@ tasks.register<JavaExec>("runJob") {
     mainClass.set("job.JobMainKt")
     // You can override interval, input, etc. via --args (see README)
 }
+
+// ---- Новая задача: запуск агента ----
+tasks.register<JavaExec>("runAgent") {
+    group = "application"
+    description = "Run system agent with Gemini integration"
+    classpath = sourceSets["main"].runtimeClasspath
+    mainClass.set("ChatKt")
+    standardInput = System.`in`
+}

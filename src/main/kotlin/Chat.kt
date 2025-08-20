@@ -7,25 +7,40 @@ import java.nio.file.Files
 import java.nio.file.Paths
 import java.time.Duration
 import mcp.TodoistManager
+import agent.SystemAgent
 import kotlin.collections.get
 
 private const val INSTRUCTION_FILE = "system_instruction.txt"
 
 data class Msg(val role: String, val content: String) // role: "user" | "model"
 
+// Стандартная функция main для запуска через Gradle
+fun main() {
+    runChat()
+}
+
+// Функция main с параметром для использования в других местах
 fun main(input: String? = null): String {
+    return runChat(input)
+}
+
+fun runChat(input: String? = null): String {
     val apiKey = System.getenv("GEMINI_API_KEY")
         ?: error("Set GEMINI_API_KEY environment variable")
 
-    val todoistApiKey = System.getenv("TODOIST_API_KEY") ?: error("Set TODOIST_API_KEY environment variable")
+    val todoistApiKey = System.getenv("TODOIST_API_KEY")
     val todoistServerPath = System.getenv("TODOIST_MCP_SERVER_PATH")
 
-    val model = "gemini-2.5-flash"
+    val model = "gemini-2.5-flash-lite"
     val url = "https://generativelanguage.googleapis.com/v1beta/models/$model:generateContent?key=$apiKey"
 
     val systemInstruction = loadSystemInstruction()
 
     println("systemInstruction: $systemInstruction")
+
+    // Инициализируем системный агент
+    val systemAgent = SystemAgent()
+    systemAgent.initialize()
 
     // Инициализируем Todoist менеджер
     val todoistManager = TodoistManager()
@@ -48,7 +63,7 @@ fun main(input: String? = null): String {
 
     val json = jacksonObjectMapper()
 
-    println("Gemini Kotlin Chat. Type 'exit' to quit.\n")
+    println("Gemini Kotlin Chat с поддержкой системного агента. Type 'exit' to quit.\n")
 
     while (true) {
         print("Вы: ")
@@ -57,6 +72,7 @@ fun main(input: String? = null): String {
             if (todoistApiKey != null) {
                 todoistManager.disconnect()
             }
+            systemAgent.disconnect()
             break
         }
 
@@ -117,10 +133,33 @@ fun main(input: String? = null): String {
                 ?.get("content")?.get("parts")?.get(0)?.get("text")
                 ?.asText()?.trim().orEmpty()
 
-            println("Модель: $reply\n")
-            history += Msg("model", reply)
+            // Проверяем, содержит ли ответ команду агента
+            val finalReply = if (reply.contains("КОМАНДА_АГЕНТА:")) {
+                val commandLine = reply.lines().find { it.contains("КОМАНДА_АГЕНТА:") }
+                if (commandLine != null) {
+                    val command = commandLine.substringAfter("КОМАНДА_АГЕНТА:").trim()
+                    println("🤖 Обнаружена команда агента: $command")
+                    
+                    // Выполняем команду через агента
+                    val agentResult = systemAgent.executeCommand(command)
+                    println("🤖 Результат выполнения: $agentResult")
+                    
+                    // Заменяем команду на результат выполнения
+                    reply.replace(commandLine, "Результат выполнения команды:\n$agentResult")
+                } else {
+                    reply
+                }
+            } else {
+                reply
+            }
 
-            return reply
+            println("Модель: $finalReply\n")
+            history += Msg("model", finalReply)
+
+            // Если это однократный запуск (input задан), возвращаем результат
+            if (input != null) {
+                return finalReply
+            }
         }
     }
     return ""
