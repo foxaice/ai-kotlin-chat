@@ -33,12 +33,17 @@ fun main(args: Array<String>) {
     val tgChatId = opts["chatId"] ?: System.getenv("TELEGRAM_CHAT_ID")
     val tgToken = opts["tgToken"] ?: System.getenv("TELEGRAM_BOT_TOKEN")
 
+    System.err.println("[Day9] 🚀 Запуск планировщика...")
+    System.err.println("[Day9] ⚙️ Параметры: intervalSeconds=$intervalSec, useMcpChain=$useMcpChain")
+    System.err.println("[Day9] 📱 TG Chat ID: ${tgChatId?.take(5)}***")
+    System.err.println("[Day9] 🔑 TG Token: ${if (tgToken?.isNotBlank() == true) "установлен" else "НЕ УСТАНОВЛЕН"}")
+
     if (tgToken.isNullOrBlank() || tgChatId.isNullOrBlank()) {
-        System.err.println("[Day9] TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID not set. Exiting.")
+        System.err.println("[Day9] ❌ TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID not set. Exiting.")
         exitProcess(2)
     }
     if (System.getenv("GEMINI_API_KEY").isNullOrBlank()) {
-        System.err.println("[Day9] GEMINI_API_KEY is not set. Exiting.")
+        System.err.println("[Day9] ❌ GEMINI_API_KEY is not set. Exiting.")
         exitProcess(3)
     }
 
@@ -59,10 +64,14 @@ fun main(args: Array<String>) {
     try {
         while (true) {
             try {
+                System.err.println("[Day9] 🔄 Начинаю новый цикл...")
+
                 val reply = if (useMcpChain && mcpManager != null) {
                     // Используем цепочку MCP серверов
                     System.err.println("[Day9] 🔗 Запуск цепочки MCP серверов...")
-                    mcpManager.getTodayTasksAndSendToTelegram()
+                    val result = mcpManager.getTodayTasksAndSendToTelegram()
+                    System.err.println("[Day9] 📤 Результат MCP цепочки: $result")
+                    result
                 } else {
                     // Используем старый способ через ChatKt
                     System.err.println("[Day9] 💬 Запуск через ChatKt...")
@@ -79,6 +88,7 @@ fun main(args: Array<String>) {
                 }
 
                 System.err.println("[Day9] ✅ Цикл завершен: $reply")
+                System.err.println("[Day9] ⏳ Ожидание ${intervalSec} секунд до следующего цикла...")
 
             } catch (e: Exception) {
                 System.err.println("[Day9] ERROR: ${e.message}")
@@ -88,6 +98,7 @@ fun main(args: Array<String>) {
             try {
                 Thread.sleep((intervalSec * 1000L).coerceAtLeast(5000L))
             } catch (_: InterruptedException) {
+                System.err.println("[Day9] 🛑 Получен сигнал остановки")
                 break
             }
         }
