@@ -1,6 +1,6 @@
-
 package mcp
 
+import runChat
 import java.net.HttpURLConnection
 import java.net.URL
 import java.net.URLEncoder
@@ -35,27 +35,61 @@ class McpManager {
                 val tasks = todoistMcp!!.listTasks(filter = "today")
 
                 if (tasks.isNotEmpty()) {
-                    val tasksText = formatTasksForTelegram(tasks)
-                    println("[McpManager] 📋 Получены задачи: $tasksText")
+                    val rawTasksText = formatTasksForDisplay(tasks)
+                    println("[McpManager] 📋 Сырые данные задач: $rawTasksText")
 
-                    // Отправляем в Telegram
-                    val telegramResult = sendToTelegram(tasksText)
+                    // Обрабатываем через Gemini для красивого форматирования
+                    val geminiInput = """
+                        Создай отчёт по задачам на сегодня для меня. Передавай мне доброе утро! и какую-нибудь рандомную цитату,
+                        чтобы легче было вставать и выполнять задачи - не говори, что это рандомная цитата, 
+                        сделай вид что ты сам её предложить и напиши всё сообщение мне гармонично, чтобы оно смотрелось
+                        Добавь эмоджи и теплоты)
+                        Расскажи, что у меня запланировано на сегодня и если есть конкретное время выполнение задачи, то обязательно укажи это в сообщении - при написании задач эмоджи не пишутся
+                        Укажи время к задачам!!!!
+                        Ты личный помощник Тудуистик!
+                        Помни, что ты пишешь сообщения для телеграмма. Учитывай формат сообщения, чтобы телеграм его поддерживал!!!
+                        
+                        формат задачи:
+                        - {название задачи}{время, когда необходимо её исполнить}
+                        
+                        пункт про задачи выдели жирным
+                        
+                        Вот сами задачи на сегодня: $tasks
+                    """.trimIndent()
+
+                    println("[McpManager] 🤖 Обрабатываю задачи через Gemini...")
+                    val formattedMessage = runChat(geminiInput)
+
+                    println("[McpManager] 📝 Gemini сформировал сообщение: ${formattedMessage.take(200)}...")
+
+                    // Отправляем отформатированное сообщение в Telegram
+                    val telegramResult = sendToTelegram(formattedMessage)
 
                     if (telegramResult.startsWith("✅")) {
-                        "✅ Задачи отправлены в Telegram успешно:\n$tasksText"
+                        "✅ Отчёт по задачам отправлен в Telegram через Gemini:\n${formattedMessage.take(300)}..."
                     } else {
-                        "⚠️ Задачи получены, но ошибка отправки в Telegram:\n$telegramResult\n\nЗадачи:\n$tasksText"
+                        "⚠️ Отчёт сформирован Gemini, но ошибка отправки в Telegram:\n$telegramResult"
                     }
                 } else {
-                    val noTasksMessage = "📅 Задач на сегодня не найдено"
+                    // Обрабатываем отсутствие задач через Gemini
+                    val noTasksInput = """
+                        Создай доброе утреннее сообщение для пользователя. 
+                        У него нет задач на сегодня в Todoist.
+                        Добавь мотивирующую цитату и пожелания хорошего дня.
+                        Используй эмоджи и тёплый тон.
+                        Сообщение для Telegram, учитывай его форматирование.
+                        Ты личный помощник Тудуистик!
+                    """.trimIndent()
+
+                    val noTasksMessage = runChat(noTasksInput)
                     sendToTelegram(noTasksMessage)
-                    noTasksMessage
+                    "📅 Задач на сегодня не найдено, отправлено мотивирующее сообщение"
                 }
             } catch (e: Exception) {
                 val errorMessage = "❌ Ошибка получения задач через MCP: ${e.message}"
                 println("[McpManager] $errorMessage")
                 try {
-                    sendToTelegram(errorMessage)
+                    sendToTelegram("❌ Произошла ошибка при получении задач из Todoist. Проверьте настройки.")
                 } catch (telegramError: Exception) {
                     println("[McpManager] Также не удалось отправить ошибку в Telegram: ${telegramError.message}")
                 }
@@ -64,7 +98,7 @@ class McpManager {
         } else {
             val errorMessage = "❌ MCP сервер не подключен"
             try {
-                sendToTelegram(errorMessage)
+                sendToTelegram("🔌 Планировщик задач временно недоступен. Проверьте подключение к Todoist.")
             } catch (e: Exception) {
                 println("[McpManager] Не удалось отправить статус отключения в Telegram: ${e.message}")
             }
@@ -81,21 +115,9 @@ class McpManager {
                 return "❌ Не установлены токены Telegram"
             }
 
-            // Форматируем сообщение для Telegram
-            val formattedMessage = buildString {
-                appendLine("🌅 Доброе утро!")
-                appendLine("⏰ ${java.time.LocalDateTime.now().format(java.time.format.DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm"))}")
-                appendLine()
-                appendLine("💭 Помните: каждый день — это новая страница вашей истории успеха!")
-                appendLine()
-                appendLine("**📋 Ваши задачи на сегодня:**")
-                appendLine()
-                append(message)
-            }
-
             println("[McpManager] 📤 Отправляю сообщение в Telegram...")
 
-            val chunks = formattedMessage.chunked(3900) // Telegram limit
+            val chunks = message.chunked(3900) // Telegram limit
             for ((i, chunk) in chunks.withIndex()) {
                 val success = sendTelegramMessage(tgToken, tgChatId, chunk)
                 if (!success) {
@@ -149,7 +171,7 @@ class McpManager {
         }
     }
 
-    private fun formatTasksForTelegram(tasks: List<Map<String, Any>>): String {
+    private fun formatTasksForDisplay(tasks: List<Map<String, Any>>): String {
         return buildString {
             for (task in tasks) {
                 val result = (task["result"] as? Map<*, *>)?.get("content") as? List<*>
@@ -157,14 +179,14 @@ class McpManager {
                     if (taskData is Map<*, *>) {
                         val content = taskData["content"] as? String ?: "Без названия"
                         val due = (taskData["due"] as? Map<*, *>)?.get("string") as? String ?: ""
-                        val dueText = if (due.isNotEmpty()) " *($due)*" else ""
+                        val dueText = if (due.isNotEmpty()) " (срок: $due)" else ""
                         appendLine("• $content$dueText")
                     }
                 }
             }
 
             if (isEmpty()) {
-                append("📝 Задач на сегодня не запланировано. Отличный день для новых идей!")
+                append("Задач на сегодня не запланировано")
             }
         }
     }

@@ -36,8 +36,6 @@ fun runChat(input: String? = null): String {
 
     val systemInstruction = loadSystemInstruction()
 
-    println("systemInstruction: $systemInstruction")
-
     // Инициализируем системный агент
     val systemAgent = SystemAgent()
     systemAgent.initialize()
