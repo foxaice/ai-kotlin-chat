@@ -38,13 +38,19 @@ tasks.register<JavaExec>("runJob") {
     // You can override interval, input, etc. via --args (see README)
 }
 
-// ---- Новая задача: запуск агента ----
+// Задача для запуска агента
 tasks.register<JavaExec>("runAgent") {
     group = "application"
-    description = "Run system agent with Gemini integration"
-    classpath = sourceSets["main"].runtimeClasspath
-    mainClass.set("ChatKt")
-    standardInput = System.`in`
+    description = "Run the Test Agent"
+    classpath = sourceSets.main.get().runtimeClasspath
+    mainClass.set("EnhancedTestAgentKt")
+
+    // Передача аргументов из командной строки
+    args = if (project.hasProperty("appArgs")) {
+        (project.property("appArgs") as String).split("\\s+".toRegex())
+    } else {
+        emptyList()
+    }
 }
 
 tasks.test {
