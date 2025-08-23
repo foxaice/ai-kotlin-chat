@@ -23,7 +23,38 @@ class EnhancedTestAgent {
     private val geminiApiKey = System.getenv("GEMINI_API_KEY")
         ?: throw IllegalStateException("❌ GEMINI_API_KEY environment variable is not set")
 
-    private val geminiApiUrl = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:generateContent"
+    private val geminiApiUrl = "https://generativelanguage.googleapis.com/v1beta/models/$geminiModel:generateContent"
+
+    private val geminiModel: String
+        get() {
+            return "gemini-2.5-flash"
+            return "gemini-2.5-flash-lite"
+            return "gemini-2.5-flash-exp"
+            return "gemini-2.0-flash"
+            return "gemini-2.0-flash-lite"
+            return "gemini-2.0-flash-exp"
+            return "gemma-3n-e2b-it"
+            return "gemma-3n-e4b-it"
+            return "gemma-3-1b-it"
+            return "gemma-3-4b-it"
+            return "gemma-3-12b-it"
+            return "gemma-3-27b-it"
+        }
+
+    private val deepseekModel: String
+        get() {
+            return "deepseek-chat"
+            return "deepseek-reasoner"
+        }
+
+    private val isDebug = false
+
+    private val llmType = LLMType.GEMINI
+
+    private enum class LLMType {
+        GEMINI,
+        DEEPSEEK
+    }
 
     data class TestResult(
         val success: Boolean,
@@ -102,10 +133,8 @@ class EnhancedTestAgent {
                 val runResult = tryRunTests(testFilePath, className, detectedPackage)
                 if (runResult.success) {
                     println("🎉 Все тесты прошли успешно!")
-                    println(runResult.output)
                 } else {
                     println("❌ Тесты скомпилированы, но упали при выполнении:")
-                    println(runResult.output)
                     lastError = "Test execution failed: ${runResult.output}"
 
                     // Если тесты не прошли, продолжаем итерации для исправления
@@ -175,7 +204,7 @@ $sourceCode
 Верни код начинающийся с package declaration, без markdown блоков.
         """.trimIndent()
 
-        return callGeminiApi(prompt)
+        return callModelApi(prompt)
     }
 
     private suspend fun fixTests(
@@ -233,7 +262,14 @@ $errorOutput
 НЕ используй markdown блоки в ответе!
         """.trimIndent()
 
-        return callGeminiApi(prompt)
+        return callModelApi(prompt)
+    }
+
+    private suspend fun callModelApi(prompt: String): String {
+        return when (llmType) {
+            LLMType.GEMINI -> callGeminiApi(prompt)
+            LLMType.DEEPSEEK -> callDeepSeekChat(prompt, model = deepseekModel)
+        }
     }
 
     private suspend fun callGeminiApi(prompt: String): String {
@@ -340,7 +376,13 @@ $errorOutput
             } catch (e: Exception) {
                 when (e) {
                     is IOException -> throw e
-                    else -> throw IOException("Failed to parse Gemini API response: ${e.message}\nResponse preview: ${responseBody.take(200)}...")
+                    else -> throw IOException(
+                        "Failed to parse Gemini API response: ${e.message}\nResponse preview: ${
+                            responseBody.take(
+                                200
+                            )
+                        }..."
+                    )
                 }
             }
         }
@@ -349,8 +391,15 @@ $errorOutput
     private fun cleanupGeneratedCode(code: String): String {
         var cleaned = code.trim()
 
-        println("🔍 Исходный ответ от Gemini (первые 200 символов):")
-        println("${cleaned.take(200)}...")
+        if (isDebug.not()) {
+            println("🔍 Исходный ответ от LLM (первые 200 символов):")
+            println("${cleaned.take(200)}...")
+        } else {
+            println("🔍 Исходный ответ от LLM:")
+            println(cleaned)
+            println("press the Enter key to continue...")
+            readlnOrNull()
+        }
 
         // Множественные стратегии извлечения кода
 
@@ -462,7 +511,10 @@ $errorOutput
                         errors.add("❌ Line ${index + 1}: Incorrect assertThrows syntax, use assertThrows<ExceptionType>")
                     }
 
-                    if (trimmed.contains("assertEquals(") && trimmed.contains("Double") && !trimmed.contains("delta") && !trimmed.contains("0.0")) {
+                    if (trimmed.contains("assertEquals(") && trimmed.contains("Double") && !trimmed.contains("delta") && !trimmed.contains(
+                            "0.0"
+                        )
+                    ) {
                         errors.add("⚠️  Line ${index + 1}: Consider using delta for Double assertions")
                     }
 
@@ -471,7 +523,10 @@ $errorOutput
                         errors.add("❌ Line ${index + 1}: result.getOrNull() returns nullable type, use result.getOrThrow() or handle null")
                     }
 
-                    if (trimmed.contains(".getOrNull()") && (trimmed.contains("assertEquals") || trimmed.contains("assertTrue") || trimmed.contains("assertFalse"))) {
+                    if (trimmed.contains(".getOrNull()") && (trimmed.contains("assertEquals") || trimmed.contains("assertTrue") || trimmed.contains(
+                            "assertFalse"
+                        ))
+                    ) {
                         errors.add("❌ Line ${index + 1}: getOrNull() returns nullable type, assertions may fail due to type mismatch")
                     }
 
@@ -548,19 +603,7 @@ $errorOutput
             val testFile = File(testFilePath).absoluteFile
             val projectRoot = findProjectRoot(testFile.parentFile)
 
-            // Пытаемся запустить тесты разными способами
-            val gradleResult = runTestsWithGradle(projectRoot, className, packageName)
-            if (gradleResult.success) {
-                return gradleResult
-            }
-
-            val mavenResult = runTestsWithMaven(projectRoot, className, packageName)
-            if (mavenResult.success) {
-                return mavenResult
-            }
-
-            // Fallback: прямая компиляция и запуск с kotlinc
-            return runTestsWithKotlinc(testFilePath, className, packageName, projectRoot)
+            return runTestsWithGradle(projectRoot, className, packageName)
         } catch (e: Exception) {
             TestResult(false, "❌ Test execution failed: ${e.message}")
         }
@@ -575,7 +618,8 @@ $errorOutput
                 File(current, "build.gradle").exists() ||
                 File(current, "pom.xml").exists() ||
                 File(current, "settings.gradle.kts").exists() ||
-                File(current, "gradlew").exists()) {
+                File(current, "gradlew").exists()
+            ) {
                 return current
             }
             current = current.parentFile
@@ -588,7 +632,10 @@ $errorOutput
         return try {
             println("🔍 Попытка запустить все тесты...")
 
-            val gradlew = File(projectRoot, if (System.getProperty("os.name").lowercase().contains("win")) "gradlew.bat" else "gradlew")
+            val gradlew = File(
+                projectRoot,
+                if (System.getProperty("os.name").lowercase().contains("win")) "gradlew.bat" else "gradlew"
+            )
             val gradleCommand = if (gradlew.exists()) {
                 gradlew.absolutePath
             } else {
@@ -630,8 +677,11 @@ $errorOutput
             println("   - Class name: $className")
             println("   - Package name: $packageName")
 
-            val gradlew = File(projectRoot, if (System.getProperty("os.name").lowercase().contains("win")) "gradlew.bat" else "gradlew")
-            val gradleCommand = if (!gradlew.exists()) {
+            val gradlew = File(
+                projectRoot,
+                if (System.getProperty("os.name").lowercase().contains("win")) "gradlew.bat" else "gradlew"
+            )
+            val gradleCommand = if (gradlew.exists()) {
                 println("   - Using gradlew: ${gradlew.absolutePath}")
                 gradlew.absolutePath
             } else {
@@ -771,7 +821,12 @@ $errorOutput
         }
     }
 
-    private fun runTestsWithKotlinc(testFilePath: String, className: String, packageName: String, projectRoot: File): TestResult {
+    private fun runTestsWithKotlinc(
+        testFilePath: String,
+        className: String,
+        packageName: String,
+        projectRoot: File
+    ): TestResult {
         return try {
             println("🔍 Пытаемся скомпилировать и запустить тесты с kotlinc...")
 
@@ -927,6 +982,70 @@ $errorOutput
         val match = classRegex.find(sourceCode)
         return match?.groupValues?.getOrNull(1) ?: "UnknownClass"
     }
+
+    // === DeepSeek API support ===
+    // Uses OpenAI-compatible Chat Completions endpoint.
+    private val deepseekApiBaseUrl = "https://api.deepseek.com"
+    private val deepseekChatCompletionsPath = "/chat/completions"
+    private val deepseekApiKey: String? = System.getenv("DEEPSEEK_API_KEY")
+
+    /**
+     * Call DeepSeek chat completion API.
+     *
+     * @param userContent - user message to send
+     * @param systemPrompt - optional system prompt
+     * @param model - DeepSeek model id, e.g. "deepseek-chat" or "deepseek-reasoner"
+     * @param temperature - sampling temperature (optional)
+     * @param maxTokens - optional max tokens for completion
+     * @throws IllegalStateException if DEEPSEEK_API_KEY is not set
+     * @throws IOException on non-200 response
+     */
+    fun callDeepSeekChat(
+        userContent: String,
+        systemPrompt: String? = null,
+        model: String = "deepseek-chat",
+        temperature: Double? = 0.1,
+        maxTokens: Int? = null
+    ): String {
+        val key = deepseekApiKey ?: throw IllegalStateException("❌ DEEPSEEK_API_KEY environment variable is not set")
+        val url = deepseekApiBaseUrl + deepseekChatCompletionsPath
+
+        val messages = mutableListOf<Map<String, Any?>>()
+        if (!systemPrompt.isNullOrBlank()) {
+            messages += mapOf("role" to "system", "content" to systemPrompt)
+        }
+        messages += mapOf("role" to "user", "content" to userContent)
+
+        val payload = mutableMapOf<String, Any?>(
+            "model" to model,
+            "messages" to messages,
+            "stream" to false
+        )
+        if (temperature != null) payload["temperature"] = temperature
+        if (maxTokens != null) payload["max_tokens"] = maxTokens
+
+        val mediaType = "application/json; charset=utf-8".toMediaType()
+        val body = objectMapper.writeValueAsString(payload).toRequestBody(mediaType)
+
+        val request = Request.Builder()
+            .url(url)
+            .header("Authorization", "Bearer $key")
+            .header("Content-Type", "application/json")
+            .post(body)
+            .build()
+
+        httpClient.newCall(request).execute().use { resp ->
+            val respBody = resp.body?.string() ?: ""
+            if (!resp.isSuccessful) {
+                throw IOException("DeepSeek API error: HTTP ${resp.code} -> $respBody")
+            }
+            val node = objectMapper.readTree(respBody)
+            // Non-streaming response: choices[0].message.content
+            val contentNode = node.get("choices")?.get(0)?.get("message")?.get("content")
+            return cleanupGeneratedCode(contentNode?.asText() ?: respBody)
+        }
+    }
+    // === End of DeepSeek API support ===
 }
 
 fun main(args: Array<String>) = runBlocking {
@@ -934,7 +1053,8 @@ fun main(args: Array<String>) = runBlocking {
     println("=" * 60)
 
     if (args.isEmpty()) {
-        println("""
+        println(
+            """
             📋 Использование: 
             kotlin EnhancedTestAgent.kt <путь_к_исходному_файлу> [путь_к_файлу_тестов] [пакет]
             
@@ -950,7 +1070,8 @@ fun main(args: Array<String>) = runBlocking {
             1. Перейти на https://makersuite.google.com/app/apikey
             2. Создать новый API ключ
             3. Экспортировать: export GEMINI_API_KEY="your-api-key-here"
-        """.trimIndent())
+        """.trimIndent()
+        )
         exitProcess(1)
     }
 
