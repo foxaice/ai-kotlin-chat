@@ -102,9 +102,18 @@ class EnhancedTestAgent {
                 val runResult = tryRunTests(testFilePath, className, detectedPackage)
                 if (runResult.success) {
                     println("🎉 Все тесты прошли успешно!")
-                } else {
-                    println("⚠️  Тесты скомпилированы, но некоторые могут не пройти:")
                     println(runResult.output)
+                } else {
+                    println("❌ Тесты скомпилированы, но упали при выполнении:")
+                    println(runResult.output)
+                    lastError = "Test execution failed: ${runResult.output}"
+
+                    // Если тесты не прошли, продолжаем итерации для исправления
+                    if (iteration < maxIterations) {
+                        println("🔄 Попытка исправить упавшие тесты...")
+                        iteration++
+                        continue
+                    }
                 }
 
                 return
@@ -255,7 +264,7 @@ $errorOutput
             .header("Content-Type", "application/json")
             .build()
 
-        return httpClient.newCall(request).execute().use { response ->
+        httpClient.newCall(request).execute().use { response ->
             if (!response.isSuccessful) {
                 val errorBody = response.body?.string() ?: "No error details"
                 throw IOException("Gemini API error: ${response.code} - ${response.message}\nDetails: $errorBody")
@@ -284,7 +293,7 @@ $errorOutput
                     throw IOException("First candidate is null in API response")
                 }
 
-                // Проверяем если контент был заблокирован
+                // Проверяем, если контент был заблокирован
                 val finishReason = firstCandidate.path("finishReason").asText("")
                 if (finishReason == "SAFETY") {
                     throw IOException("Content was blocked by safety filters")
@@ -385,7 +394,7 @@ $errorOutput
             .dropLastWhile { it.isBlank() }
             .joinToString("\n")
 
-        // Проверяем что это похоже на Kotlin код
+        // Проверяем, что это похоже на Kotlin код
         if (!cleaned.contains("package ") && !cleaned.contains("class ") && !cleaned.contains("fun ")) {
             println("⚠️  Предупреждение: результат не похож на Kotlin код")
 
@@ -504,7 +513,7 @@ $errorOutput
 
     private fun compileTest(testFilePath: String, packageName: String): TestResult {
         return try {
-            // Для демонстрации - простая проверка что файл можно прочитать и он содержит основные элементы
+            // Для демонстрации - простая проверка, что файл можно прочитать и он содержит основные элементы
             val testFile = File(testFilePath)
             if (!testFile.exists()) {
                 return TestResult(false, "Test file does not exist: $testFilePath")
@@ -534,12 +543,377 @@ $errorOutput
 
     private fun tryRunTests(testFilePath: String, className: String, packageName: String): TestResult {
         return try {
-            println("🏃 Попытка проверки тестов...")
-            // Здесь можно добавить реальный запуск тестов через процесс или другим способом
-            TestResult(true, "Test execution simulation passed")
+            println("🏃 Запуск тестов в реальном окружении...")
+
+            val testFile = File(testFilePath).absoluteFile
+            val projectRoot = findProjectRoot(testFile.parentFile)
+
+            // Пытаемся запустить тесты разными способами
+            val gradleResult = runTestsWithGradle(projectRoot, className, packageName)
+            if (gradleResult.success) {
+                return gradleResult
+            }
+
+            val mavenResult = runTestsWithMaven(projectRoot, className, packageName)
+            if (mavenResult.success) {
+                return mavenResult
+            }
+
+            // Fallback: прямая компиляция и запуск с kotlinc
+            return runTestsWithKotlinc(testFilePath, className, packageName, projectRoot)
         } catch (e: Exception) {
-            TestResult(false, "Test execution failed: ${e.message}")
+            TestResult(false, "❌ Test execution failed: ${e.message}")
         }
+    }
+
+    private fun findProjectRoot(startDir: File?): File {
+        var current = startDir ?: File(".")
+
+        while (current.parentFile != null) {
+            // Ищем признаки корня проекта
+            if (File(current, "build.gradle.kts").exists() ||
+                File(current, "build.gradle").exists() ||
+                File(current, "pom.xml").exists() ||
+                File(current, "settings.gradle.kts").exists() ||
+                File(current, "gradlew").exists()) {
+                return current
+            }
+            current = current.parentFile
+        }
+
+        return startDir ?: File(".")
+    }
+
+    private fun runAllTestsWithGradle(projectRoot: File): TestResult {
+        return try {
+            println("🔍 Попытка запустить все тесты...")
+
+            val gradlew = File(projectRoot, if (System.getProperty("os.name").lowercase().contains("win")) "gradlew.bat" else "gradlew")
+            val gradleCommand = if (gradlew.exists()) {
+                gradlew.absolutePath
+            } else {
+                "gradle"
+            }
+
+            val testCommand = listOf(gradleCommand, "test", "--info")
+
+            println("🚀 Выполнение команды: ${testCommand.joinToString(" ")}")
+
+            val processBuilder = ProcessBuilder(testCommand)
+                .directory(projectRoot)
+                .redirectErrorStream(true)
+
+            val process = processBuilder.start()
+            val output = process.inputStream.bufferedReader().readText()
+            val exitCode = process.waitFor()
+
+            println("📋 Вывод всех тестов:")
+            println(output)
+
+            if (exitCode == 0) {
+                TestResult(true, "✅ Все тесты прошли успешно!\n$output")
+            } else {
+                TestResult(false, "❌ Тесты упали с кодом $exitCode:\n$output")
+            }
+
+        } catch (e: Exception) {
+            println("⚠️  Ошибка запуска всех тестов: ${e.message}")
+            TestResult(false, "All tests execution failed: ${e.message}")
+        }
+    }
+
+    private fun runTestsWithGradle(projectRoot: File, className: String, packageName: String): TestResult {
+        return try {
+            println("🔍 Поиск Gradle в проекте...")
+            println("📊 Отладочная информация:")
+            println("   - Project root: ${projectRoot.absolutePath}")
+            println("   - Class name: $className")
+            println("   - Package name: $packageName")
+
+            val gradlew = File(projectRoot, if (System.getProperty("os.name").lowercase().contains("win")) "gradlew.bat" else "gradlew")
+            val gradleCommand = if (!gradlew.exists()) {
+                println("   - Using gradlew: ${gradlew.absolutePath}")
+                gradlew.absolutePath
+            } else {
+                println("   - Using system gradle")
+                "gradle"
+            }
+
+            // Формируем правильное имя класса теста - добавляем Test в конце, если его нет
+            val testClassName = if (className.endsWith("Test")) className else "${className}Test"
+            val fullTestClass = if (packageName.isNotEmpty()) {
+                "${packageName}.${testClassName}"
+            } else {
+                testClassName
+            }
+
+            println("   - Test class name: $testClassName")
+            println("   - Full test class: $fullTestClass")
+
+            // Убеждаемся, что рабочая директория - это корень проекта
+            if (!File(projectRoot, "build.gradle.kts").exists() && !File(projectRoot, "build.gradle").exists()) {
+                println("⚠️  Внимание: build.gradle не найден в ${projectRoot.absolutePath}")
+                println("⚠️  Возможно, неправильно определен корень проекта")
+            }
+
+            println("gradleCommand: $gradleCommand")
+
+            // Сначала пытаемся запустить все тесты, если конкретный тест не найден
+            val testCommand = listOf(
+                gradleCommand,
+                "clean",
+                "test",
+                "--tests", fullTestClass
+            )
+
+            println("🚀 Выполнение команды: ${testCommand.joinToString(" ")}")
+            println("📂 Рабочая директория: ${projectRoot.absolutePath}")
+
+            val processBuilder = ProcessBuilder(testCommand)
+                .directory(projectRoot)
+                .redirectErrorStream(true)
+
+            val process = processBuilder.start()
+            val output = process.inputStream.bufferedReader().readText()
+            val exitCode = process.waitFor()
+
+            println("📋 Вывод Gradle:")
+            println(output)
+
+            if (exitCode == 0) {
+                TestResult(true, "✅ Gradle тесты прошли успешно!\n$output")
+            } else {
+                // Если тест с конкретным именем не сработал, пробуем запустить все тесты
+                if (output.contains("No tests found")) {
+                    println("🔄 Конкретный тест не найден, пытаемся запустить все тесты...")
+                    return runAllGradleTests(projectRoot, gradleCommand)
+                }
+                TestResult(false, "❌ Gradle тесты упали с кодом $exitCode:\n$output")
+            }
+
+        } catch (e: Exception) {
+            println("⚠️  Gradle не найден или не может быть запущен: ${e.message}")
+            TestResult(false, "Gradle execution failed: ${e.message}")
+        }
+    }
+
+    private fun runAllGradleTests(projectRoot: File, gradleCommand: String): TestResult {
+        return try {
+            val testCommand = listOf(
+                gradleCommand,
+                "clean",
+                "test",
+                "--info"
+            )
+
+            println("🚀 Запуск всех тестов: ${testCommand.joinToString(" ")}")
+
+            val processBuilder = ProcessBuilder(testCommand)
+                .directory(projectRoot)
+                .redirectErrorStream(true)
+
+            val process = processBuilder.start()
+            val output = process.inputStream.bufferedReader().readText()
+            val exitCode = process.waitFor()
+
+            println("📋 Вывод всех тестов:")
+            println(output)
+
+            if (exitCode == 0) {
+                TestResult(true, "✅ Все Gradle тесты прошли успешно!\n$output")
+            } else {
+                TestResult(false, "❌ Gradle тесты упали с кодом $exitCode:\n$output")
+            }
+
+        } catch (e: Exception) {
+            TestResult(false, "All tests execution failed: ${e.message}")
+        }
+    }
+
+    private fun runTestsWithMaven(projectRoot: File, className: String, packageName: String): TestResult {
+        return try {
+            println("🔍 Поиск Maven в проекте...")
+
+            if (!File(projectRoot, "pom.xml").exists()) {
+                return TestResult(false, "pom.xml not found")
+            }
+
+            val mvnCommand = if (System.getProperty("os.name").lowercase().contains("win")) "mvn.cmd" else "mvn"
+
+            val testCommand = listOf(
+                mvnCommand,
+                "test",
+                "-Dtest=${className}Test"
+            )
+
+            println("🚀 Выполнение команды: ${testCommand.joinToString(" ")}")
+
+            val processBuilder = ProcessBuilder(testCommand)
+                .directory(projectRoot)
+                .redirectErrorStream(true)
+
+            val process = processBuilder.start()
+            val output = process.inputStream.bufferedReader().readText()
+            val exitCode = process.waitFor()
+
+            println("📋 Вывод Maven:")
+            println(output)
+
+            if (exitCode == 0) {
+                TestResult(true, "✅ Maven тесты прошли успешно!\n$output")
+            } else {
+                TestResult(false, "❌ Maven тесты упали с кодом $exitCode:\n$output")
+            }
+
+        } catch (e: Exception) {
+            println("⚠️  Maven не найден или не может быть запущен: ${e.message}")
+            TestResult(false, "Maven execution failed: ${e.message}")
+        }
+    }
+
+    private fun runTestsWithKotlinc(testFilePath: String, className: String, packageName: String, projectRoot: File): TestResult {
+        return try {
+            println("🔍 Пытаемся скомпилировать и запустить тесты с kotlinc...")
+
+            val testFile = File(testFilePath)
+            val tempDir = File(System.getProperty("java.io.tmpdir"), "kotlin-test-${System.currentTimeMillis()}")
+            tempDir.mkdirs()
+
+            // Ищем исходный файл для компиляции
+            val sourceFile = findSourceFile(projectRoot, className, packageName)
+
+            if (sourceFile == null) {
+                return TestResult(false, "❌ Не найден исходный файл для класса $className")
+            }
+
+            // Подготавливаем classpath с JUnit
+            val junitClasspath = findJUnitClasspath()
+            if (junitClasspath.isEmpty()) {
+                return TestResult(false, "❌ JUnit не найден в classpath. Установите JUnit 5.")
+            }
+
+            // Компилируем исходный файл
+            val compileSourceCommand = listOf(
+                "kotlinc",
+                sourceFile.absolutePath,
+                "-cp", junitClasspath,
+                "-d", tempDir.absolutePath
+            )
+
+            println("🔨 Компиляция исходного файла: ${compileSourceCommand.joinToString(" ")}")
+            val compileSourceProcess = ProcessBuilder(compileSourceCommand).start()
+            val compileSourceOutput = compileSourceProcess.inputStream.bufferedReader().readText()
+            val compileSourceExit = compileSourceProcess.waitFor()
+
+            if (compileSourceExit != 0) {
+                return TestResult(false, "❌ Ошибка компиляции исходного файла:\n$compileSourceOutput")
+            }
+
+            // Компилируем тестовый файл
+            val compileTestCommand = listOf(
+                "kotlinc",
+                testFile.absolutePath,
+                "-cp", "$junitClasspath${File.pathSeparator}${tempDir.absolutePath}",
+                "-d", tempDir.absolutePath
+            )
+
+            println("🔨 Компиляция тестового файла: ${compileTestCommand.joinToString(" ")}")
+            val compileTestProcess = ProcessBuilder(compileTestCommand).start()
+            val compileTestOutput = compileTestProcess.inputStream.bufferedReader().readText()
+            val compileTestExit = compileTestProcess.waitFor()
+
+            if (compileTestExit != 0) {
+                return TestResult(false, "❌ Ошибка компиляции тестового файла:\n$compileTestOutput")
+            }
+
+            // Запускаем тесты через JUnit Platform Console Launcher
+            val runTestCommand = listOf(
+                "java",
+                "-cp", "$junitClasspath${File.pathSeparator}${tempDir.absolutePath}",
+                "org.junit.platform.console.ConsoleLauncher",
+                "--select-class", "${packageName}.${className}Test",
+                "--details", "verbose"
+            )
+
+            println("🏃 Запуск тестов: ${runTestCommand.joinToString(" ")}")
+            val runTestProcess = ProcessBuilder(runTestCommand).start()
+            val runTestOutput = runTestProcess.inputStream.bufferedReader().readText()
+            val runTestExit = runTestProcess.waitFor()
+
+            // Очищаем временную директорию
+            tempDir.deleteRecursively()
+
+            println("📋 Вывод тестов:")
+            println(runTestOutput)
+
+            if (runTestExit == 0) {
+                TestResult(true, "✅ Тесты выполнены успешно с kotlinc!\n$runTestOutput")
+            } else {
+                TestResult(false, "❌ Тесты упали при выполнении с kotlinc (код $runTestExit):\n$runTestOutput")
+            }
+
+        } catch (e: Exception) {
+            println("⚠️  Ошибка выполнения с kotlinc: ${e.message}")
+            TestResult(false, "kotlinc execution failed: ${e.message}")
+        }
+    }
+
+    private fun findSourceFile(projectRoot: File, className: String, packageName: String): File? {
+        val packagePath = packageName.replace(".", File.separator)
+        val possiblePaths = listOf(
+            "src/main/kotlin/$packagePath/$className.kt",
+            "src/main/java/$packagePath/$className.kt",
+            "src/kotlin/$packagePath/$className.kt",
+            "src/$packagePath/$className.kt",
+            "$packagePath/$className.kt",
+            "$className.kt"
+        )
+
+        for (path in possiblePaths) {
+            val file = File(projectRoot, path)
+            if (file.exists()) {
+                println("✅ Найден исходный файл: ${file.absolutePath}")
+                return file
+            }
+        }
+
+        println("⚠️  Исходный файл не найден, проверенные пути:")
+        possiblePaths.forEach { println("   - ${File(projectRoot, it).absolutePath}") }
+        return null
+    }
+
+    private fun findJUnitClasspath(): String {
+        // Пытаемся найти JUnit в известных местах
+        val possibleJars = listOf(
+            // Gradle cache locations
+            "${System.getProperty("user.home")}/.gradle/caches/modules-2/files-2.1/org.junit.jupiter/junit-jupiter-engine",
+            "${System.getProperty("user.home")}/.gradle/caches/modules-2/files-2.1/org.junit.jupiter/junit-jupiter-api",
+            "${System.getProperty("user.home")}/.gradle/caches/modules-2/files-2.1/org.junit.platform/junit-platform-console-standalone",
+            // Maven cache locations
+            "${System.getProperty("user.home")}/.m2/repository/org/junit/jupiter/junit-jupiter-engine",
+            "${System.getProperty("user.home")}/.m2/repository/org/junit/jupiter/junit-jupiter-api",
+            "${System.getProperty("user.home")}/.m2/repository/org/junit/platform/junit-platform-console-standalone"
+        )
+
+        val junitJars = mutableListOf<String>()
+
+        for (basePath in possibleJars) {
+            val baseDir = File(basePath)
+            if (baseDir.exists()) {
+                baseDir.walkTopDown()
+                    .filter { it.isFile && it.name.endsWith(".jar") }
+                    .forEach { junitJars.add(it.absolutePath) }
+            }
+        }
+
+        if (junitJars.isNotEmpty()) {
+            println("✅ Найдены JUnit JAR файлы:")
+            junitJars.forEach { println("   - $it") }
+            return junitJars.joinToString(File.pathSeparator)
+        }
+
+        println("⚠️  JUnit JAR файлы не найдены. Попытка использовать системный classpath...")
+        return System.getProperty("java.class.path", "")
     }
 
     private fun detectPackageName(sourceCode: String): String {
